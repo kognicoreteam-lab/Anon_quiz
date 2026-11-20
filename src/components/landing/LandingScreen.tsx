@@ -1,8 +1,18 @@
 import React, { useState } from 'react';
-import { ArrowRight, QrCode, CheckSquare, Clock, ShieldCheck, Loader2, History, ScanLine } from 'lucide-react';
+import {
+  ArrowRight,
+  QrCode,
+  CheckSquare,
+  Clock,
+  ShieldCheck,
+  Loader2,
+  History,
+  ScanLine,
+  Lock,
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useToast } from '../../context/ToastContext.tsx';
-import { lookupQuizByJoinCode } from '../../services/index.ts';
+import { ApiError, lookupQuizByJoinCode } from '../../services/index.ts';
 import { normalizeJoinCode } from '../../utils/qrUtils.ts';
 import { listRecentSubmittedSessions } from '../../utils/anonSession.ts';
 import { QrScannerModal } from '../participant/QrScannerModal.tsx';
@@ -11,16 +21,30 @@ interface LandingScreenProps {
   onNavigate: (path: string) => void;
 }
 
+type HostAuthMode = 'login' | 'register';
+
 export function LandingScreen({ onNavigate }: LandingScreenProps) {
-  const { user, loading: authLoading, accessDeniedMessage, clearAccessDenied, signInWithGoogle } =
-    useAuth();
+  const {
+    user,
+    loading: authLoading,
+    accessDeniedMessage,
+    clearAccessDenied,
+    signInWithGoogle,
+    signInHost,
+    registerHost,
+  } = useAuth();
   const { showToast } = useToast();
 
   const [joinCode, setJoinCode] = useState('');
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
 
+  const [authMode, setAuthMode] = useState<HostAuthMode>('login');
+  const [hostEmail, setHostEmail] = useState('');
+  const [hostPassword, setHostPassword] = useState('');
+  const [hostDisplayName, setHostDisplayName] = useState('');
   const [signingIn, setSigningIn] = useState(false);
+  const [googleSigningIn, setGoogleSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
 
@@ -54,7 +78,7 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
     }
     setAuthError(null);
     clearAccessDenied();
-    setSigningIn(true);
+    setGoogleSigningIn(true);
     try {
       await signInWithGoogle();
       showToast('Signed in with Google', 'success');
@@ -62,15 +86,66 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
     } catch (err) {
       const raw = err instanceof Error ? err.message : 'Google sign-in failed.';
       if (raw.includes('auth/popup-closed-by-user')) {
-        setAuthError('Sign-in popup was closed before completing.');
+        setAuthError('Google sign-in popup was closed before completing.');
       } else if (raw.includes('auth/popup-blocked')) {
-        setAuthError('Popup was blocked by your browser. Please allow popups for this site and try again.');
+        setAuthError(
+          'Popup was blocked by your browser. Allow popups for this site or sign in with your host email & password below.'
+        );
+      } else if (raw.includes('auth/unauthorized-domain')) {
+        setAuthError(
+          `Google Sign-In needs "${window.location.hostname}" added under Firebase Console → Authentication → Settings → Authorized domains. You can also sign in right now using Host Email & Password below.`
+        );
       } else {
         setAuthError(raw);
       }
     } finally {
+      setGoogleSigningIn(false);
+    }
+  };
+
+  const handleHostAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    clearAccessDenied();
+
+    const trimmedEmail = hostEmail.trim();
+    if (!trimmedEmail) {
+      setAuthError('Enter your authorized host email address.');
+      return;
+    }
+    if (!hostPassword) {
+      setAuthError('Enter a host password.');
+      return;
+    }
+
+    setSigningIn(true);
+    try {
+      if (authMode === 'register') {
+        await registerHost(trimmedEmail, hostPassword, hostDisplayName);
+        showToast('Host account created and signed in', 'success');
+      } else {
+        await signInHost(trimmedEmail, hostPassword);
+        showToast('Signed in to Host Mode', 'success');
+      }
+      onNavigate('/host');
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'HOST_NOT_REGISTERED') {
+        setAuthMode('register');
+        setAuthError(err.message);
+      } else {
+        setAuthError(err instanceof Error ? err.message : 'Authentication failed.');
+      }
+    } finally {
       setSigningIn(false);
     }
+  };
+
+  const handleHeaderHostClick = () => {
+    if (user) {
+      onNavigate('/host');
+      return;
+    }
+    document.getElementById('host-mode')?.scrollIntoView({ behavior: 'smooth' });
   };
 
   return (
@@ -104,11 +179,11 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
           <div className="shrink-0">
             <button
               type="button"
-              onClick={handleGoogleSignIn}
-              disabled={signingIn || authLoading}
+              onClick={handleHeaderHostClick}
+              disabled={authLoading}
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
             >
-              {user ? 'Open Dashboard' : signingIn ? 'Signing in...' : 'Host Sign In'}
+              {user ? 'Open Dashboard' : 'Host Sign In'}
             </button>
           </div>
         </div>
@@ -255,7 +330,7 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
               )}
             </div>
 
-            {/* Host Mode Entry */}
+            {/* Host Mode Entry (Google Sign-In + Email/Password via Node.js Backend) */}
             <div
               id="host-mode"
               className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 sm:p-8 flex flex-col justify-between"
@@ -267,8 +342,8 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
                   </h2>
                   <span className="text-xs font-medium text-slate-500">Authorized hosts only</span>
                 </div>
-                <p className="text-sm text-slate-600 mb-6">
-                  Sign in with your Google account to build MCQ, short-answer, and paragraph quizzes, generate a fresh QR code anytime, award marks with feedback, and recalculate scores live.
+                <p className="text-sm text-slate-600 mb-5">
+                  Sign in with Google or your host email &amp; password to create MCQ, short-answer, and paragraph quizzes, generate fresh QR codes, and publish marks live.
                 </p>
 
                 {user ? (
@@ -301,52 +376,188 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
                     </button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
+                    {/* Google Sign-In Button */}
                     <button
                       type="button"
                       onClick={handleGoogleSignIn}
-                      disabled={signingIn || authLoading}
-                      className="w-full h-11 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60"
+                      disabled={googleSigningIn || signingIn || authLoading}
+                      data-testid="google-signin-btn"
+                      className="w-full h-11 px-4 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 text-sm font-medium inline-flex items-center justify-center gap-2.5 transition-colors disabled:opacity-60"
                     >
-                      {signingIn ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                      {googleSigningIn ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
                       ) : (
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                           <path
-                            fill="currentColor"
+                            fill="#4285F4"
                             d="M21.35 11.1h-9.18v2.92h5.27c-.23 1.24-.92 2.29-1.97 3v2.48h3.18c1.86-1.71 2.93-4.24 2.93-7.22 0-.4-.04-.79-.23-1.18z"
                           />
                           <path
-                            fill="currentColor"
+                            fill="#34A853"
                             d="M12.17 22c2.66 0 4.89-.88 6.52-2.38l-3.18-2.48c-.88.59-2.01.94-3.34.94-2.57 0-4.74-1.73-5.52-4.06H3.37v2.56C5.01 19.83 8.33 22 12.17 22z"
                           />
                           <path
-                            fill="currentColor"
+                            fill="#FBBC05"
                             d="M6.65 14.02c-.2-.59-.31-1.22-.31-1.87s.11-1.28.31-1.87V7.72H3.37A9.96 9.96 0 0 0 2.17 12.15c0 1.61.39 3.13 1.2 4.43l3.28-2.56z"
                           />
                           <path
-                            fill="currentColor"
+                            fill="#EA4335"
                             d="M12.17 6.22c1.45 0 2.75.5 3.77 1.48l2.83-2.83C17.05 3.26 14.83 2.3 12.17 2.3c-3.84 0-7.16 2.17-8.8 5.42l3.28 2.56c.78-2.33 2.95-4.06 5.52-4.06z"
                           />
                         </svg>
                       )}
-                      {signingIn ? 'Signing in...' : 'Sign in with Google'}
+                      {googleSigningIn ? 'Signing in with Google...' : 'Continue with Google'}
                     </button>
 
-                    {(authError || accessDeniedMessage) && (
-                      <p
-                        role="alert"
-                        className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium leading-relaxed"
+                    <div className="relative flex items-center py-0.5">
+                      <div className="flex-1 border-t border-slate-200" />
+                      <span className="px-2.5 text-[11px] font-medium text-slate-400">
+                        or host email &amp; password
+                      </span>
+                      <div className="flex-1 border-t border-slate-200" />
+                    </div>
+
+                    <div
+                      className="grid grid-cols-2 p-1 rounded-lg bg-slate-100"
+                      role="tablist"
+                      aria-label="Host email authentication mode"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={authMode === 'login'}
+                        onClick={() => {
+                          setAuthMode('login');
+                          setAuthError(null);
+                          clearAccessDenied();
+                        }}
+                        className={`h-8 text-xs font-medium rounded-md transition-colors ${
+                          authMode === 'login'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
                       >
-                        {authError || accessDeniedMessage}
-                      </p>
-                    )}
+                        Host Sign In
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={authMode === 'register'}
+                        onClick={() => {
+                          setAuthMode('register');
+                          setAuthError(null);
+                          clearAccessDenied();
+                        }}
+                        className={`h-8 text-xs font-medium rounded-md transition-colors ${
+                          authMode === 'register'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        First-Time Setup
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleHostAuthSubmit} className="space-y-3">
+                      {authMode === 'register' && (
+                        <div>
+                          <label
+                            htmlFor="host-name-input"
+                            className="block text-xs font-medium text-slate-700 mb-1"
+                          >
+                            Display Name (Optional)
+                          </label>
+                          <input
+                            id="host-name-input"
+                            type="text"
+                            maxLength={80}
+                            value={hostDisplayName}
+                            onChange={(e) => setHostDisplayName(e.target.value)}
+                            placeholder="Prof. Senthil"
+                            className="w-full h-10 px-3 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                          />
+                        </div>
+                      )}
+
+                      <div>
+                        <label
+                          htmlFor="host-email-input"
+                          className="block text-xs font-medium text-slate-700 mb-1"
+                        >
+                          Authorized Host Email
+                        </label>
+                        <input
+                          id="host-email-input"
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={hostEmail}
+                          onChange={(e) => {
+                            setHostEmail(e.target.value);
+                            if (authError) setAuthError(null);
+                          }}
+                          placeholder="host@example.com"
+                          className="w-full h-10 px-3 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="host-password-input"
+                          className="block text-xs font-medium text-slate-700 mb-1"
+                        >
+                          {authMode === 'register' ? 'Create Host Password (min 6 chars)' : 'Host Password'}
+                        </label>
+                        <input
+                          id="host-password-input"
+                          type="password"
+                          autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                          required
+                          minLength={authMode === 'register' ? 6 : 1}
+                          value={hostPassword}
+                          onChange={(e) => {
+                            setHostPassword(e.target.value);
+                            if (authError) setAuthError(null);
+                          }}
+                          placeholder="••••••••"
+                          className="w-full h-10 px-3 rounded-lg border border-slate-300 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={signingIn || googleSigningIn || authLoading}
+                        className="w-full h-11 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                      >
+                        {signingIn ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Lock className="w-4 h-4" />
+                        )}
+                        {signingIn
+                          ? 'Authenticating...'
+                          : authMode === 'register'
+                            ? 'Create Host Account'
+                            : 'Sign In with Email'}
+                      </button>
+
+                      {(authError || accessDeniedMessage) && (
+                        <p
+                          role="alert"
+                          data-testid="host-auth-error"
+                          className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 font-medium leading-relaxed"
+                        >
+                          {authError || accessDeniedMessage}
+                        </p>
+                      )}
+                    </form>
                   </div>
                 )}
               </div>
 
               <div className="mt-6 pt-5 border-t border-slate-100 text-xs text-slate-500">
-                Real-time Firestore sync keeps submissions, timer extensions, and host score updates in lockstep.
+                Both Google Sign-In and email login connect to the same authorized host account on your Node.js backend.
               </div>
             </div>
           </div>
@@ -367,7 +578,7 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
                   01. Time-Limited QR Launch
                 </h3>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Set an exact duration from 5 minutes to custom windows. Generate a scannable QR code and 6-character code that automatically locks when the timer hits 00:00.
+                  Set an exact duration from 5 minutes to custom windows. Generate a fresh scannable QR code and 6-character code that automatically locks when the timer hits 00:00.
                 </p>
               </div>
 
@@ -391,7 +602,7 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
                   03. Live Grading & Key Recalculation
                 </h3>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Award full or partial credit on short answers, add per-question feedback, or fix a question&apos;s answer key to recalculate every submission and push updates instantly.
+                  Award full or partial marks on short answers and paragraphs, add per-question feedback, or fix an answer key to recalculate every submission and push updates instantly.
                 </p>
               </div>
             </div>
@@ -405,7 +616,7 @@ export function LandingScreen({ onNavigate }: LandingScreenProps) {
             <Clock className="w-3.5 h-3.5" />
             <span>AnonQuiz · Anonymous Assessment & Live Grading</span>
           </div>
-          <span>Privacy-first sessions with real-time score synchronization</span>
+          <span>Privacy-first sessions with real-time Node.js synchronization</span>
         </div>
       </footer>
 

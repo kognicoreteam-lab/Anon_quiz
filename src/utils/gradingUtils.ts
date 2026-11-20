@@ -5,8 +5,13 @@ import type {
   QuizQuestion,
   QuizSubmission,
   ReviewStatus,
+  SessionMode,
   UserAnswerValue,
 } from '../types/quiz.ts';
+
+export function isChoiceQuestionType(type: QuestionType): boolean {
+  return type === 'mcq' || type === 'multi_select';
+}
 
 export function countWords(text: string): number {
   const trimmed = (text || '').trim();
@@ -15,7 +20,8 @@ export function countWords(text: string): number {
 }
 
 export function formatQuestionTypeLabel(type: QuestionType): string {
-  if (type === 'mcq') return 'Multiple Choice';
+  if (type === 'mcq') return 'Single Choice';
+  if (type === 'multi_select') return 'Multiple Select';
   if (type === 'paragraph') return 'Paragraph';
   return 'Short Answer';
 }
@@ -67,20 +73,30 @@ export function calculateScorePercent(totalScore: number, maxScore: number): num
 
 export function autoGradeSubmission(
   questions: QuizQuestion[],
-  answers: Record<string, UserAnswerValue>
+  answers: Record<string, UserAnswerValue>,
+  mode: SessionMode = 'quiz'
 ): {
   grading: Record<string, QuestionGrading>;
   totalScore: number;
   maxScore: number;
   reviewStatus: ReviewStatus;
 } {
+  if (mode === 'poll') {
+    return {
+      grading: {},
+      totalScore: 0,
+      maxScore: 0,
+      reviewStatus: 'auto_graded',
+    };
+  }
+
   const grading: Record<string, QuestionGrading> = {};
   let totalScore = 0;
   let hasManualQuestion = false;
 
   for (const q of questions) {
     const points = Math.max(0, Number(q.points) || 0);
-    if (q.type === 'mcq') {
+    if (isChoiceQuestionType(q.type)) {
       const exact = isMcqAnswerExactMatch(answers[q.id], q.correctAnswer);
       const awarded = exact ? points : 0;
       totalScore += awarded;
@@ -132,7 +148,7 @@ export function recalculateSubmissionAfterKeyChange(
     const points = Math.max(0, Number(q.points) || 0);
     const prev = submission.grading[q.id];
 
-    if (q.type === 'mcq') {
+    if (isChoiceQuestionType(q.type)) {
       const exact = isMcqAnswerExactMatch(submission.answers[q.id], q.correctAnswer);
       const awarded = exact ? points : 0;
       totalScore += awarded;
@@ -254,7 +270,7 @@ export function summarizeMarksBreakdown(
     const grade = grading[q.id];
     const awarded = grade ? Math.max(0, Number(grade.pointsAwarded) || 0) : 0;
 
-    if (q.type === 'mcq') {
+    if (isChoiceQuestionType(q.type)) {
       hasMcqQuestions = true;
       mcqMax += pts;
       mcqEarned += awarded;
@@ -289,15 +305,19 @@ export interface QuizValidationResult {
   errors: string[];
 }
 
-export function validateQuizDraft(input: {
-  title: string;
-  description?: string;
-  questions: QuizQuestion[];
-}): QuizValidationResult {
+export function validateQuizDraft(
+  input: {
+    title: string;
+    description?: string;
+    questions: QuizQuestion[];
+  },
+  mode: SessionMode = 'quiz'
+): QuizValidationResult {
   const errors: string[] = [];
+  const entityLabel = mode === 'poll' ? 'Poll' : 'Quiz';
 
   if (!input.title || input.title.trim().length < 2) {
-    errors.push('Quiz title must be at least 2 characters.');
+    errors.push(`${entityLabel} title must be at least 2 characters.`);
   }
 
   if (!Array.isArray(input.questions) || input.questions.length === 0) {
@@ -308,19 +328,21 @@ export function validateQuizDraft(input: {
       if (!q.text || q.text.trim().length === 0) {
         errors.push(`${label}: Question text is required.`);
       }
-      if (!Number.isFinite(q.points) || q.points <= 0) {
+      if (mode === 'quiz' && (!Number.isFinite(q.points) || q.points <= 0)) {
         errors.push(`${label}: Points must be greater than 0.`);
       }
-      if (q.type === 'mcq') {
+      if (isChoiceQuestionType(q.type)) {
         const cleanOptions = (q.options || []).map((opt) => opt.trim());
         if (cleanOptions.length < 2 || cleanOptions.some((opt) => opt.length === 0)) {
-          errors.push(`${label}: All multiple-choice options must be filled in.`);
+          errors.push(`${label}: At least 2 non-empty options are required.`);
         }
-        const correct = normalizeMcqAnswer(q.correctAnswer);
-        if (correct.length === 0) {
-          errors.push(`${label}: Select at least one correct option.`);
-        } else if (correct.some((c) => c >= cleanOptions.length)) {
-          errors.push(`${label}: Selected correct option is out of range.`);
+        if (mode === 'quiz') {
+          const correct = normalizeMcqAnswer(q.correctAnswer);
+          if (correct.length === 0) {
+            errors.push(`${label}: Select at least one correct option.`);
+          } else if (correct.some((c) => c >= cleanOptions.length)) {
+            errors.push(`${label}: Selected correct option is out of range.`);
+          }
         }
       }
     });

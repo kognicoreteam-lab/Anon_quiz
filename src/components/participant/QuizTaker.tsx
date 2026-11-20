@@ -3,7 +3,7 @@ import { Clock, Check, Send, Loader2, Shield } from 'lucide-react';
 import type { PublicQuizView, SubmissionResultPayload, UserAnswerValue } from '../../types/quiz.ts';
 import { countWords } from '../../utils/gradingUtils.ts';
 import { formatCountdown, getRemainingMs } from '../../utils/timeUtils.ts';
-import { submitQuizAnswers, subscribeQuizDoc } from '../../services/index.ts';
+import { submitQuizAnswers, subscribePublicQuiz } from '../../services/index.ts';
 import { updateAnonSession } from '../../utils/anonSession.ts';
 import { useToast } from '../../context/ToastContext.tsx';
 
@@ -96,9 +96,9 @@ export function QuizTaker({
     return () => window.clearInterval(interval);
   }, [quiz.expiresAt, performSubmit]);
 
-  // Listen for live host timer extensions or early ending via Firestore onSnapshot
+  // Listen for live host timer extensions or early ending via Node.js SSE
   useEffect(() => {
-    const unsubscribe = subscribeQuizDoc(quiz.id, (updated) => {
+    const unsubscribe = subscribePublicQuiz(quiz.id, (updated) => {
       if (!updated) return;
       if (
         updated.expiresAt &&

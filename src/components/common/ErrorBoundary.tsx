@@ -21,7 +21,7 @@ export class ErrorBoundary extends React.Component<
       const parsed = JSON.parse(message);
       if (parsed && typeof parsed.error === 'string') {
         message = parsed.error.includes('Missing or insufficient permissions')
-          ? 'You do not have permission to perform this action. Please sign in with a verified Google account or refresh the page.'
+          ? 'You do not have permission to perform this action. Please sign in with an authorized host account or refresh the page.'
           : parsed.error;
       }
     } catch {

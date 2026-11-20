@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Clock, ArrowLeft, AlertCircle, Loader2, QrCode } from 'lucide-react';
 import type { PublicQuizView, SubmissionResultPayload } from '../../types/quiz.ts';
-import { fetchQuizDoc, fetchSubmissionBySession, toPublicQuizView } from '../../services/index.ts';
+import { fetchPublicQuiz, fetchSubmissionBySession } from '../../services/index.ts';
 import { getOrCreateAnonSession, updateAnonSession } from '../../utils/anonSession.ts';
 import { computeEffectiveQuizStatus } from '../../utils/timeUtils.ts';
 import { QuizTaker } from './QuizTaker.tsx';
@@ -48,22 +48,21 @@ export function UserJoin({ quizId, qrParam, onNavigate }: UserJoinProps) {
         }
 
         // Otherwise load public quiz metadata and verify QR token + expiration
-        const rawQuiz = await fetchQuizDoc(quizId);
+        const publicQuiz = await fetchPublicQuiz(quizId);
         if (!active) return;
-        if (!rawQuiz) {
+        if (!publicQuiz) {
           setError('We could not find a quiz matching this link.');
           setLoading(false);
           return;
         }
 
-        if (qrParam && rawQuiz.qrToken && qrParam !== rawQuiz.qrToken) {
+        if (qrParam && publicQuiz.qrToken && qrParam !== publicQuiz.qrToken) {
           setQrSuperseded(true);
-          setQuiz(toPublicQuizView(rawQuiz));
+          setQuiz(publicQuiz);
           setLoading(false);
           return;
         }
 
-        const publicQuiz = toPublicQuizView(rawQuiz);
         updateAnonSession(quizId, {
           quizTitle: publicQuiz.title,
           joinCode: publicQuiz.joinCode,

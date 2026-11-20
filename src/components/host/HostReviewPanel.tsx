@@ -19,7 +19,7 @@ import type {
 import {
   gradeSubmission,
   recalculateAllScores,
-  subscribeQuizDoc,
+  subscribeHostQuizDoc,
   subscribeQuizSubmissions,
 } from '../../services/index.ts';
 import {
@@ -66,7 +66,7 @@ export function HostReviewPanel({ quizId, onBack }: HostReviewPanelProps) {
     initializedSubsRef.current = false;
     knownSubIdsRef.current = new Set();
 
-    const unsubQuiz = subscribeQuizDoc(
+    const unsubQuiz = subscribeHostQuizDoc(
       quizId,
       (docQuiz) => {
         setQuiz(docQuiz);

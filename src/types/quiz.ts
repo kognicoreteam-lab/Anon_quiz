@@ -1,4 +1,6 @@
-export type QuestionType = 'mcq' | 'short_answer' | 'paragraph';
+export type SessionMode = 'quiz' | 'poll';
+
+export type QuestionType = 'mcq' | 'multi_select' | 'short_answer' | 'paragraph';
 
 export type QuizStatus = 'draft' | 'active' | 'expired';
 
@@ -11,13 +13,14 @@ export interface QuizQuestion {
   type: QuestionType;
   text: string;
   options: string[];
-  /** For MCQ: array of option indices (supports single or multi-select). For short_answer/paragraph: optional reference answer or rubric string. */
+  /** For MCQ / multi_select in quiz mode: array of correct option indices. For short_answer/paragraph: optional reference answer or rubric. Empty in poll mode. */
   correctAnswer: number[] | string;
   points: number;
 }
 
 export interface Quiz {
   id: string;
+  mode?: SessionMode;
   hostUid: string;
   hostEmail?: string;
   title: string;
@@ -32,6 +35,7 @@ export interface Quiz {
 }
 
 export interface QuizSummary extends Quiz {
+  mode: SessionMode;
   submissionCount: number;
   pendingReviewCount: number;
   averageScorePercent: number | null;
@@ -73,6 +77,7 @@ export interface HostUser {
 
 export interface PublicQuizView {
   id: string;
+  mode: SessionMode;
   hostUid: string;
   title: string;
   description: string;
@@ -94,6 +99,7 @@ export interface PublicQuizView {
 export interface SubmissionResultPayload {
   quiz: {
     id: string;
+    mode: SessionMode;
     title: string;
     description: string;
     joinCode: string;
@@ -102,4 +108,47 @@ export interface SubmissionResultPayload {
     questions: QuizQuestion[];
   };
   submission: QuizSubmission;
+}
+
+export interface PollOptionStat {
+  optionIndex: number;
+  label: string;
+  count: number;
+  /** Percentage of total respondents who chose this option (can exceed 100% combined on multi_select) */
+  respondentPercent: number;
+  /** Share of all option selections made for this question (sums to 100%) */
+  selectionSharePercent: number;
+}
+
+export interface PollTextResponse {
+  anonId: string;
+  alias?: string;
+  text: string;
+  submittedAt: number;
+}
+
+export interface PollQuestionAggregate {
+  questionId: string;
+  type: QuestionType;
+  text: string;
+  totalResponses: number;
+  totalSelections: number;
+  options: PollOptionStat[];
+  topOptionIndices: number[];
+  textResponses: PollTextResponse[];
+}
+
+export interface PollResultsPayload {
+  poll: {
+    id: string;
+    mode: 'poll';
+    title: string;
+    description: string;
+    joinCode: string;
+    status: QuizStatus;
+    expiresAt: number | null;
+  };
+  totalRespondents: number;
+  updatedAt: number;
+  questions: PollQuestionAggregate[];
 }
