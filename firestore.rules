@@ -1,0 +1,271 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSessionToken(id) {
+      return id is string && id.size() >= 16 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidJoinCode(code) {
+      return code is string && code.size() == 6 && code.matches('^[A-Z0-9]{6}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedHost() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in [
+          'sharveshragavendra252@gmail.com',
+          'senthilkumarp@bitsathy.ac.in'
+        ];
+    }
+
+    // --- Validation Blueprints (Pillar 2 & Pillar 5) ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidQrToken(token) {
+      return token is string && token.size() >= 12 && token.size() <= 64 && token.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidQuiz(data) {
+      return data.keys().hasAll([
+          'hostUid', 'title', 'description', 'joinCode', 'status',
+          'createdAt', 'updatedAt', 'expiresAt', 'questions'
+        ])
+        && data.keys().hasOnly([
+          'hostUid', 'title', 'description', 'joinCode', 'qrToken', 'status',
+          'createdAt', 'updatedAt', 'expiresAt', 'questions'
+        ])
+        && isValidId(data.hostUid)
+        && data.hostUid == request.auth.uid
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 160
+        && data.description is string && data.description.size() <= 1000
+        && isValidJoinCode(data.joinCode)
+        && (!('qrToken' in data) || isValidQrToken(data.qrToken))
+        && data.status in ['draft', 'active', 'expired']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (data.expiresAt == null || data.expiresAt is timestamp)
+        && data.questions is list
+        && data.questions.size() >= 1
+        && data.questions.size() <= 100
+        && data.questions[0] is map;
+    }
+
+    function isValidJoinCodeDoc(data) {
+      return data.keys().hasAll(['quizId', 'hostUid', 'createdAt'])
+        && data.keys().hasOnly(['quizId', 'hostUid', 'createdAt'])
+        && isValidId(data.quizId)
+        && isValidId(data.hostUid)
+        && data.hostUid == request.auth.uid
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSubmission(data, quizId, submissionId) {
+      return data.keys().hasAll([
+          'quizId', 'hostUid', 'sessionToken', 'anonId',
+          'submittedAt', 'updatedAt', 'answers', 'grading',
+          'totalScore', 'maxScore', 'reviewStatus', 'autoSubmitted'
+        ])
+        && data.keys().hasOnly([
+          'quizId', 'hostUid', 'sessionToken', 'anonId', 'alias',
+          'submittedAt', 'updatedAt', 'answers', 'grading',
+          'totalScore', 'maxScore', 'reviewStatus', 'autoSubmitted'
+        ])
+        && isValidId(data.quizId) && data.quizId == quizId
+        && isValidId(data.hostUid)
+        && isValidSessionToken(data.sessionToken) && data.sessionToken == submissionId
+        && data.anonId is string && data.anonId.size() >= 3 && data.anonId.size() <= 32
+        && (!('alias' in data) || (data.alias is string && data.alias.size() <= 40))
+        && data.submittedAt is timestamp
+        && data.updatedAt is timestamp
+        && data.answers is map && data.answers.size() <= 100
+        && data.grading is map && data.grading.size() <= 100
+        && data.totalScore is number && data.totalScore >= 0 && data.totalScore <= 10000
+        && data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 10000
+        && data.totalScore <= data.maxScore
+        && data.reviewStatus in ['auto_graded', 'pending', 'reviewed']
+        && data.autoSubmitted is bool;
+    }
+
+    // --- Collection: /users/{userId} (Pillar 6: Private PII Isolation) ---
+    match /users/{userId} {
+      allow get: if isVerifiedHost() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isVerifiedHost()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedHost()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // --- Collection: /joinCodes/{joinCode} (Direct O(1) Lookup, No Listing) ---
+    match /joinCodes/{joinCode} {
+      allow get: if isValidJoinCode(joinCode);
+      allow list: if false;
+      allow create: if isVerifiedHost()
+        && isValidJoinCode(joinCode)
+        && isValidJoinCodeDoc(incoming())
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/quizzes/$(incoming().quizId))
+        && getAfter(/databases/$(database)/documents/quizzes/$(incoming().quizId)).data.hostUid == request.auth.uid;
+      allow update: if false;
+      allow delete: if isVerifiedHost()
+        && isValidJoinCode(joinCode)
+        && existing().hostUid == request.auth.uid;
+    }
+
+    // --- Collection: /quizzes/{quizId} ---
+    match /quizzes/{quizId} {
+      // Hosts can get any of their own quizzes; anonymous users can get active/expired quizzes (or non-existent check)
+      allow get: if isValidId(quizId) && (
+        resource == null ||
+        (isVerifiedHost() && existing().hostUid == request.auth.uid) ||
+        existing().status == 'active' ||
+        existing().status == 'expired'
+      );
+
+      // Pillar 8: Secure List Queries (host can only list own quizzes; no get() inside list)
+      allow list: if isVerifiedHost() && resource.data.hostUid == request.auth.uid;
+
+      allow create: if isVerifiedHost()
+        && isValidId(quizId)
+        && isValidQuiz(incoming())
+        && incoming().status == 'draft'
+        && incoming().expiresAt == null
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      // Action-Based Updates wrapped by validation helper
+      allow update: if isVerifiedHost()
+        && isValidId(quizId)
+        && isValidQuiz(incoming())
+        && existing().hostUid == request.auth.uid
+        && incoming().hostUid == existing().hostUid
+        && incoming().joinCode == existing().joinCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Edit quiz content or answer keys
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'questions', 'updatedAt'])
+          ||
+          // Action 2: Launch, reopen, or extend active quiz timer (with fresh qrToken)
+          (
+            incoming().status == 'active'
+            && incoming().expiresAt is timestamp
+            && incoming().expiresAt > request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'expiresAt', 'qrToken', 'updatedAt'])
+          )
+          ||
+          // Action 3: End quiz early / expire quiz
+          (
+            incoming().status == 'expired'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'expiresAt', 'updatedAt'])
+          )
+          ||
+          // Action 4: Generate a fresh QR code token for this quiz
+          (
+            'qrToken' in incoming()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['qrToken', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isVerifiedHost()
+        && isValidId(quizId)
+        && existing().hostUid == request.auth.uid;
+
+      // --- Subcollection: /quizzes/{quizId}/submissions/{submissionId} ---
+      match /submissions/{submissionId} {
+        // Host can get any submission for their quiz; anonymous user can get ONLY their own exact submissionId (or check non-existence)
+        allow get: if isValidId(quizId) && isValidSessionToken(submissionId) && (
+          resource == null ||
+          (isVerifiedHost() && existing().hostUid == request.auth.uid) ||
+          existing().sessionToken == submissionId
+        );
+
+        // Pillar 8: Host lists submissions for their quiz without get() read explosion
+        allow list: if isVerifiedHost() && resource.data.hostUid == request.auth.uid;
+
+        // Pillar 1 Master Gate: Anonymous participant creates their submission iff parent quiz is active & unexpired
+        allow create: if isValidId(quizId)
+          && isValidSessionToken(submissionId)
+          && isValidSubmission(incoming(), quizId, submissionId)
+          && incoming().submittedAt == request.time
+          && incoming().updatedAt == request.time
+          && incoming().reviewStatus in ['auto_graded', 'pending']
+          && exists(/databases/$(database)/documents/quizzes/$(quizId))
+          && get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostUid == incoming().hostUid
+          && get(/databases/$(database)/documents/quizzes/$(quizId)).data.status == 'active'
+          && get(/databases/$(database)/documents/quizzes/$(quizId)).data.expiresAt is timestamp
+          && request.time <= get(/databases/$(database)/documents/quizzes/$(quizId)).data.expiresAt + duration.value(10, 's');
+
+        // Tiered Identity Update: Strictly verified Host updating grading & score fields only
+        allow update: if isVerifiedHost()
+          && isValidId(quizId)
+          && isValidSessionToken(submissionId)
+          && isValidSubmission(incoming(), quizId, submissionId)
+          && existing().hostUid == request.auth.uid
+          && exists(/databases/$(database)/documents/quizzes/$(quizId))
+          && get(/databases/$(database)/documents/quizzes/$(quizId)).data.hostUid == request.auth.uid
+          && incoming().quizId == existing().quizId
+          && incoming().hostUid == existing().hostUid
+          && incoming().sessionToken == existing().sessionToken
+          && incoming().anonId == existing().anonId
+          && incoming().submittedAt == existing().submittedAt
+          && incoming().answers == existing().answers
+          && incoming().autoSubmitted == existing().autoSubmitted
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'grading', 'totalScore', 'maxScore', 'reviewStatus', 'updatedAt'
+          ]);
+
+        // Host may clean up submissions when deleting a quiz
+        allow delete: if isVerifiedHost()
+          && isValidId(quizId)
+          && isValidSessionToken(submissionId)
+          && existing().hostUid == request.auth.uid;
+      }
+    }
+  }
+}

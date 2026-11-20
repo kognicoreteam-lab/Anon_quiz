@@ -1,0 +1,6 @@
+{
+  "name": "AnonQuiz",
+  "description": "Mobile-responsive anonymous quiz platform with time-limited QR codes, real-time host grading, and instant participant score updates.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

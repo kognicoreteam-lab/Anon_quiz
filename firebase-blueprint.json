@@ -1,0 +1,254 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private host account profile storing Google account PII isolated strictly to the owner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the host."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Verified Google email address of the host."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Host display name."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional Google avatar URL."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the host profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the host profile was last updated."
+        }
+      },
+      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "Quiz": {
+      "title": "Quiz",
+      "description": "Quiz definition owned by an authenticated host, readable by anonymous participants when active or expired.",
+      "type": "object",
+      "properties": {
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner UID matching Firebase Auth uid."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160,
+          "description": "Quiz title."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional instructions or quiz description."
+        },
+        "joinCode": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 6,
+          "pattern": "^[A-Z0-9]{6}$",
+          "description": "Unique 6-character uppercase join code."
+        },
+        "qrToken": {
+          "type": "string",
+          "minLength": 12,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Rotatable host QR session token generated each time a host creates or refreshes a quiz QR code."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "active", "expired"],
+          "description": "Lifecycle state of the quiz."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of quiz creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last quiz update."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Nullable Firestore Timestamp when an active quiz expires."
+        },
+        "questions": {
+          "type": "array",
+          "description": "Bounded list (1-100) of MCQ, Short Answer, and Paragraph question maps."
+        }
+      },
+      "required": [
+        "hostUid",
+        "title",
+        "description",
+        "joinCode",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "expiresAt",
+        "questions"
+      ]
+    },
+    "JoinCode": {
+      "title": "JoinCode",
+      "description": "Direct O(1) lookup mapping a 6-character join code to a quizId without allowing collection listing.",
+      "type": "object",
+      "properties": {
+        "quizId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Target quiz document ID."
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owner UID matching the parent quiz."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of join code creation."
+        }
+      },
+      "required": ["quizId", "hostUid", "createdAt"]
+    },
+    "Submission": {
+      "title": "Submission",
+      "description": "Anonymous participant submission stored under a quiz subcollection, keyed by unguessable sessionToken.",
+      "type": "object",
+      "properties": {
+        "quizId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent quiz document ID."
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Denormalized parent quiz hostUid verified via get() on create for O(1) host list queries."
+        },
+        "sessionToken": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unguessable local browser session token matching the submissionId."
+        },
+        "anonId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 32,
+          "description": "Generated anonymous display identifier (e.g. Anon-4821)."
+        },
+        "alias": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional anonymous participant alias."
+        },
+        "submittedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when submission was recorded."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest grading update."
+        },
+        "answers": {
+          "type": "object",
+          "description": "Map of questionId to participant answers."
+        },
+        "grading": {
+          "type": "object",
+          "description": "Map of questionId to grading outcome, pointsAwarded, and host feedback."
+        },
+        "totalScore": {
+          "type": "number",
+          "description": "Current calculated total points earned."
+        },
+        "maxScore": {
+          "type": "number",
+          "description": "Maximum possible points for the quiz."
+        },
+        "reviewStatus": {
+          "type": "string",
+          "enum": ["auto_graded", "pending", "reviewed"],
+          "description": "Review status visible to host and participant."
+        },
+        "autoSubmitted": {
+          "type": "boolean",
+          "description": "Whether the submission was triggered automatically on timer expiration."
+        }
+      },
+      "required": [
+        "quizId",
+        "hostUid",
+        "sessionToken",
+        "anonId",
+        "submittedAt",
+        "updatedAt",
+        "answers",
+        "grading",
+        "totalScore",
+        "maxScore",
+        "reviewStatus",
+        "autoSubmitted"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private host profile storing verified Google email PII accessible only to the owning user."
+    },
+    "/quizzes/{quizId}": {
+      "schema": { "$ref": "#/entities/Quiz" },
+      "description": "Host-owned quizzes with questions, join codes, and expiration timestamps."
+    },
+    "/joinCodes/{joinCode}": {
+      "schema": { "$ref": "#/entities/JoinCode" },
+      "description": "Direct get-only mapping from 6-character join code to quizId."
+    },
+    "/quizzes/{quizId}/submissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/Submission" },
+      "description": "Anonymous participant submissions and host grading records under each quiz."
+    }
+  }
+}
